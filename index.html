@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>英単語アプリ</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f0f4f8;
+            display: flex;
+            justify-content: center;
+            margin: 0;
+            padding: 20px;
+        }
+        #app-container {
+            background-color: white;
+            width: 100%;
+            max-width: 400px;
+            min-height: 80vh;
+            border-radius: 20px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            text-align: center;
+        }
+        #question-text {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 40px 0;
+            color: #333;
+        }
+        .choice-btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            margin-bottom: 10px;
+            font-size: 18px;
+            color: white;
+            background-color: #007bff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+        }
+        .choice-btn:active {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <h2>英単語テスト</h2>
+        <p>正答率: <span id="accuracy">--</span>%</p>
+        <div id="question-text">読み込み中...</div>
+        
+        <div id="choices-container">
+            </div>
+    </div>
+
+    <script>
+        let currentWordId = null;
+        let currentPage = null;
+        let currentCorrectAnswer = ""; // ここに「英語の正解」を保存する
+        
+        let totalQuestions = 0;
+        let correctAnswers = 0;
+
+        async function fetchQuestion() {
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/question');
+                const data = await response.json();
+
+                // 【修正ポイント】
+                // バックエンド(main.py)のwords_dbで定義したキー名は "english" です。
+                // なので、data.english を確実に正解として保存します。
+                currentWordId = data.id;
+                currentPage = data.page;
+                currentCorrectAnswer = data.correct_answer;
+                
+                document.getElementById('question-text').innerText = data.japanese;
+                const container = document.getElementById('choices-container');
+                container.innerHTML = '';
+
+                data.choices.forEach(englishWord => {
+                    const btn = document.createElement('button');
+                    btn.className = 'choice-btn';
+                    btn.innerText = englishWord;
+                    
+                    // ボタンを押した時に、そのボタンの文字(englishWord)を判定関数に渡す
+                    btn.onclick = () => checkAnswer(englishWord);
+                    container.appendChild(btn);
+                });
+            } catch (error) {
+                console.error("通信エラー:", error);
+            }
+        }
+
+        async function checkAnswer(selected) {
+            totalQuestions++;
+            
+            // 【デバッグ用のログ】
+            // F12キーのコンソール画面で、何と何を比較しているか見えるようにします
+            console.log("あなたが選んだ単語:", selected);
+            console.log("システム上の正解:", currentCorrectAnswer);
+
+            // 文字列が完全に一致するか比較
+            const isCorrect = (selected === currentCorrectAnswer);
+            
+            if (isCorrect) {
+                correctAnswers++;
+                alert(`● 正解！\nページ: ${currentPage}`);
+            } else {
+                alert(`× 不正解...\n正解は: ${currentCorrectAnswer}\nページ: ${currentPage}`);
+                
+                // 間違えた問題にフラグを立てる 
+                await fetch('http://127.0.0.1:8000/api/mistake', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ word_id: currentWordId })
+                });
+            }
+
+            // 正答率を更新して表示 [cite: 9]
+            const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
+            document.getElementById('accuracy').innerText = accuracy;
+
+            // 次の問題へ [cite: 6]
+            fetchQuestion();
+        }
+
+        fetchQuestion();
+    </script>
+</body>
+</html>
