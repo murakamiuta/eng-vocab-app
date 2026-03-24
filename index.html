@@ -5,79 +5,60 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>英単語アプリ</title>
     <style>
-        body {
-            font-family: sans-serif;
-            background-color: #f0f4f8;
-            display: flex;
-            justify-content: center;
-            margin: 0;
-            padding: 20px;
-        }
-        #app-container {
-            background-color: white;
-            width: 100%;
-            max-width: 400px;
-            min-height: 80vh;
-            border-radius: 20px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-            padding: 20px;
-            text-align: center;
-        }
-        #question-text {
-            font-size: 24px;
-            font-weight: bold;
-            margin: 40px 0;
-            color: #333;
-        }
-        .choice-btn {
-            display: block;
-            width: 100%;
-            padding: 15px;
-            margin-bottom: 10px;
-            font-size: 18px;
-            color: white;
-            background-color: #007bff;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-        }
-        .choice-btn:active {
-            background-color: #0056b3;
-        }
+        body { font-family: sans-serif; background-color: #f0f4f8; display: flex; justify-content: center; margin: 0; padding: 20px; }
+        #app-container { background-color: white; width: 100%; max-width: 400px; min-height: 80vh; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 20px; text-align: center; }
+        #question-text { font-size: 24px; font-weight: bold; margin: 40px 0; color: #333; }
+        .choice-btn { display: block; width: 100%; padding: 15px; margin-bottom: 10px; font-size: 18px; color: white; background-color: #007bff; border: none; border-radius: 10px; cursor: pointer; }
+        .choice-btn:active { background-color: #0056b3; }
+        #mode-btn { margin-bottom: 20px; padding: 10px 20px; border-radius: 5px; cursor: pointer; background-color: #6c757d; color: white; border: none; }
     </style>
 </head>
 <body>
 
     <div id="app-container">
         <h2>英単語テスト</h2>
+        <button id="mode-btn" onclick="toggleMode()">間違えた問題モードへ</button>
         <p>正答率: <span id="accuracy">--</span>%</p>
         <div id="question-text">読み込み中...</div>
-        
-        <div id="choices-container">
-            </div>
+        <div id="choices-container"></div>
     </div>
 
     <script>
+        // --- 1. データの準備（ブラウザの「貯金箱」から前回のデータを取り出す） ---
+        let totalQuestions = parseInt(localStorage.getItem('totalQuestions')) || 0;
+        let correctAnswers = parseInt(localStorage.getItem('correctAnswers')) || 0;
+        
         let currentWordId = null;
         let currentPage = null;
-        let currentCorrectAnswer = ""; // ここに「英語の正解」を保存する
-        
-        let totalQuestions = 0;
-        let correctAnswers = 0;
+        let currentCorrectAnswer = "";
+        let isMistakeMode = false;
 
+        // 画面が開いた瞬間に、保存されていた正答率を表示する
+        updateAccuracyDisplay();
+
+        // --- 2. 問題をサーバーからもらってくる機能 ---
         async function fetchQuestion() {
             try {
-                const response = await fetch('http://127.0.0.1:8000/api/question');
+                const url = isMistakeMode 
+                    ? 'http://127.0.0.1:8000/api/question/mistakes' 
+                    : 'http://127.0.0.1:8000/api/question';
+                
+                const response = await fetch(url);
                 const data = await response.json();
 
-                // 【修正ポイント】
-                // バックエンド(main.py)のwords_dbで定義したキー名は "english" です。
-                // なので、data.english を確実に正解として保存します。
+                if (data.data === null) {
+                    alert("間違えた問題はもうありません！通常モードに戻ります。");
+                    isMistakeMode = false;
+                    document.getElementById('mode-btn').innerText = "間違えた問題モードへ";
+                    fetchQuestion();
+                    return;
+                }
+
                 currentWordId = data.id;
                 currentPage = data.page;
-                currentCorrectAnswer = data.correct_answer;
+                currentCorrectAnswer = data.correct_answer; 
                 
-                document.getElementById('question-text').innerText = data.japanese;
+                document.getElementById('question-text').innerText = (isMistakeMode ? "【復習】" : "") + data.japanese;
                 const container = document.getElementById('choices-container');
                 container.innerHTML = '';
 
@@ -85,8 +66,6 @@
                     const btn = document.createElement('button');
                     btn.className = 'choice-btn';
                     btn.innerText = englishWord;
-                    
-                    // ボタンを押した時に、そのボタンの文字(englishWord)を判定関数に渡す
                     btn.onclick = () => checkAnswer(englishWord);
                     container.appendChild(btn);
                 });
@@ -95,24 +74,19 @@
             }
         }
 
+        // --- 3. 正誤判定と「データの保存」 ---
         async function checkAnswer(selected) {
             totalQuestions++;
-            
-            // 【デバッグ用のログ】
-            // F12キーのコンソール画面で、何と何を比較しているか見えるようにします
-            console.log("あなたが選んだ単語:", selected);
-            console.log("システム上の正解:", currentCorrectAnswer);
-
-            // 文字列が完全に一致するか比較
             const isCorrect = (selected === currentCorrectAnswer);
             
             if (isCorrect) {
                 correctAnswers++;
                 alert(`● 正解！\nページ: ${currentPage}`);
+                if (isMistakeMode) {
+                    await fetch(`http://127.0.0.1:8000/api/mistake/${currentWordId}`, { method: 'DELETE' });
+                }
             } else {
                 alert(`× 不正解...\n正解は: ${currentCorrectAnswer}\nページ: ${currentPage}`);
-                
-                // 間違えた問題にフラグを立てる 
                 await fetch('http://127.0.0.1:8000/api/mistake', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -120,11 +94,27 @@
                 });
             }
 
-            // 正答率を更新して表示 [cite: 9]
-            const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
-            document.getElementById('accuracy').innerText = accuracy;
+            // ★ここで「貯金箱(localStorage)」に最新の数字を書き込む！
+            localStorage.setItem('totalQuestions', totalQuestions);
+            localStorage.setItem('correctAnswers', correctAnswers);
 
-            // 次の問題へ [cite: 6]
+            updateAccuracyDisplay();
+            fetchQuestion();
+        }
+
+        // 正答率の表示を書き換える機能
+        function updateAccuracyDisplay() {
+            if (totalQuestions === 0) {
+                document.getElementById('accuracy').innerText = "--";
+            } else {
+                const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
+                document.getElementById('accuracy').innerText = accuracy;
+            }
+        }
+
+        function toggleMode() {
+            isMistakeMode = !isMistakeMode;
+            document.getElementById('mode-btn').innerText = isMistakeMode ? "通常モードへ" : "間違えた問題モードへ";
             fetchQuestion();
         }
 

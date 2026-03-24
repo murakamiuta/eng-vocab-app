@@ -67,3 +67,41 @@ def add_mistake(req: MistakeRequest):
     if req.word_id not in mistakes_db:
         mistakes_db.append(req.word_id)
     return {"message": "フラグを保存しました", "current_mistakes": mistakes_db}
+
+# --- 1. 【追加】間違えた問題リストから削除する「出口」 ---
+@app.delete("/api/mistake/{word_id}")
+def remove_mistake(word_id: int):
+    """正解したときに、リストからそのIDを消す"""
+    if word_id in mistakes_db:
+        mistakes_db.remove(word_id)
+        return {"status": "success", "message": f"ID {word_id} を削除しました"}
+    return {"status": "not_found", "message": "リストにありませんでした"}
+
+# --- 2. 【追加】間違えた問題だけをランダムに出題する「窓」 ---
+@app.get("/api/question/mistakes")
+def get_mistake_question():
+    """間違えたリスト(mistakes_db)の中から1つ選ぶ"""
+    if not mistakes_db:
+        # 間違えた問題が1つもない場合、フロントエンドに「ないよ」と伝える
+        return {"data": None, "message": "全てクリアしました！"}
+    
+    # mistakes_db に保存されているIDと一致する単語だけを words_db から抽出
+    target_mistakes = [w for w in words_db if w["id"] in mistakes_db]
+    
+    # その中からランダムに1つ選ぶ
+    target_word = random.choice(target_mistakes)
+    
+    # 選択肢を作る（ここは通常モードと同じロジック）
+    all_english = [w["english"] for w in words_db]
+    choices = random.sample(all_english, min(6, len(all_english)))
+    if target_word["english"] not in choices:
+        choices[0] = target_word["english"]
+    random.shuffle(choices)
+
+    return {
+        "id": target_word["id"],
+        "japanese": target_word["japanese"],
+        "choices": choices,
+        "page": target_word["page"],
+        "correct_answer": target_word["english"]
+    }
