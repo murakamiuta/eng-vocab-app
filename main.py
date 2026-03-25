@@ -19,8 +19,7 @@ app.add_middleware(
 # ==========================================
 # 🔑 クラウドデータベースの鍵（URL）を設定します
 # 先ほどコピーしてパスワードを書き換えたURLを、以下の "" の中に貼り付けてください！
-DATABASE_URL = "postgresql://postgres:nzmEYyoYwQINCiZG@db.qbaahtjrjfiuwnwklrag.supabase.co:5432/postgres"
-# ==========================================
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # --- 仮のデータ ---
 words_db = [
