@@ -2,19 +2,26 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware 
 import random
+import psycopg2 # ← 変更：Supabase（PostgreSQL）と会話するための翻訳機
+import os
 
-# APIの本体を作成
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 開発中なので、とりあえずどこからでもアクセスOKにします
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 仮のデータ（まずは7個だけでテストします） ---
+# ==========================================
+# 🔑 クラウドデータベースの鍵（URL）を設定します
+# 先ほどコピーしてパスワードを書き換えたURLを、以下の "" の中に貼り付けてください！
+DATABASE_URL = "postgresql://postgres:nzmEYyoYwQINCiZG@db.qbaahtjrjfiuwnwklrag.supabase.co:5432/postgres"
+# ==========================================
+
+# --- 仮のデータ ---
 words_db = [
     {"id": 1, "english": "follow", "japanese": "〜に従う", "page": 24},
     {"id": 2, "english": "consider", "japanese": "〜を考慮する", "page": 25},
@@ -25,73 +32,61 @@ words_db = [
     {"id": 7, "english": "provide", "japanese": "〜を与える", "page": 27},
 ]
 
-# 間違えた問題のIDを保存するリスト [cite: 8]
-mistakes_db = []
-
-# スマホから送られてくるデータの形を定義
 class MistakeRequest(BaseModel):
     word_id: int
 
-# --- ここからがAPIのルール（エンドポイント）です ---
+# --- APIのエンドポイント ---
 
 @app.get("/api/question")
 def get_question():
-    """問題と6択の選択肢を返すAPI"""
-    
-    # 仮データの中からランダムに1つの単語（正解）を選ぶ [cite: 13]
+    """問題と6択の選択肢を返すAPI（変更なし）"""
     target_word = random.choice(words_db)
-    
-    # すべての英語のリストを作り、そこからランダムに6つ選ぶ [cite: 4, 12]
     all_english = [w["english"] for w in words_db]
     choices = random.sample(all_english, min(6, len(all_english)))
-    
-    # もし選ばれた6つの中に正解が入っていなければ、1つを正解と差し替える
     if target_word["english"] not in choices:
         choices[0] = target_word["english"]
-        
-    # 選択肢の順番をシャッフルする
     random.shuffle(choices)
 
-    # スマホ側が使いやすいようにデータをまとめて返す
     return {
         "id": target_word["id"],
         "japanese": target_word["japanese"],
         "choices": choices,
-        "page": target_word["page"], # 正誤判定後にページ数を出すために必要です [cite: 7, 14]
+        "page": target_word["page"],
         "correct_answer": target_word["english"]
     }
 
 @app.post("/api/mistake")
 def add_mistake(req: MistakeRequest):
-    """間違えた問題にフラグを立てるAPI [cite: 8]"""
-    if req.word_id not in mistakes_db:
-        mistakes_db.append(req.word_id)
-    return {"message": "フラグを保存しました", "current_mistakes": mistakes_db}
+    """【Supabase対応】間違えた問題のIDをクラウドに保存する"""
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            # PostgreSQLの文法に変更（? ではなく %s を使い、重複エラーを防ぐ）
+            cursor.execute("INSERT INTO mistakes (word_id) VALUES (%s) ON CONFLICT (word_id) DO NOTHING", (req.word_id,))
+    return {"message": "クラウドのDBにフラグを保存しました"}
 
-# --- 1. 【追加】間違えた問題リストから削除する「出口」 ---
 @app.delete("/api/mistake/{word_id}")
 def remove_mistake(word_id: int):
-    """正解したときに、リストからそのIDを消す"""
-    if word_id in mistakes_db:
-        mistakes_db.remove(word_id)
-        return {"status": "success", "message": f"ID {word_id} を削除しました"}
-    return {"status": "not_found", "message": "リストにありませんでした"}
+    """【Supabase対応】正解したときに、クラウドからそのIDを消す"""
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM mistakes WHERE word_id = %s", (word_id,))
+    return {"status": "success", "message": f"ID {word_id} をクラウドから削除しました"}
 
-# --- 2. 【追加】間違えた問題だけをランダムに出題する「窓」 ---
 @app.get("/api/question/mistakes")
 def get_mistake_question():
-    """間違えたリスト(mistakes_db)の中から1つ選ぶ"""
-    if not mistakes_db:
-        # 間違えた問題が1つもない場合、フロントエンドに「ないよ」と伝える
+    """【Supabase対応】クラウドから間違えたリストを取り出して出題する"""
+    with psycopg2.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT word_id FROM mistakes")
+            db_results = cursor.fetchall()
+            mistake_ids = [row[0] for row in db_results]
+
+    if not mistake_ids:
         return {"data": None, "message": "全てクリアしました！"}
     
-    # mistakes_db に保存されているIDと一致する単語だけを words_db から抽出
-    target_mistakes = [w for w in words_db if w["id"] in mistakes_db]
-    
-    # その中からランダムに1つ選ぶ
+    target_mistakes = [w for w in words_db if w["id"] in mistake_ids]
     target_word = random.choice(target_mistakes)
     
-    # 選択肢を作る（ここは通常モードと同じロジック）
     all_english = [w["english"] for w in words_db]
     choices = random.sample(all_english, min(6, len(all_english)))
     if target_word["english"] not in choices:
