@@ -24,7 +24,10 @@
     </div>
 
     <script>
-        // --- 1. データの準備（ブラウザの「貯金箱」から前回のデータを取り出す） ---
+        // --- ★接続先をクラウド（Render）に変更します ---
+        const API_BASE_URL = "https://eng-vocab-api.onrender.com";
+
+        // --- 1. データの準備（ブラウザの「貯金箱」からデータを取り出す） ---
         let totalQuestions = parseInt(localStorage.getItem('totalQuestions')) || 0;
         let correctAnswers = parseInt(localStorage.getItem('correctAnswers')) || 0;
         
@@ -33,15 +36,14 @@
         let currentCorrectAnswer = "";
         let isMistakeMode = false;
 
-        // 画面が開いた瞬間に、保存されていた正答率を表示する
         updateAccuracyDisplay();
 
         // --- 2. 問題をサーバーからもらってくる機能 ---
         async function fetchQuestion() {
             try {
-                const url = isMistakeMode 
-                    ? 'http://127.0.0.1:8000/api/question/mistakes' 
-                    : 'http://127.0.0.1:8000/api/question';
+                // 注文先のURLをクラウドのURLに合わせて組み立て
+                const endpoint = isMistakeMode ? '/api/question/mistakes' : '/api/question';
+                const url = API_BASE_URL + endpoint;
                 
                 const response = await fetch(url);
                 const data = await response.json();
@@ -71,6 +73,7 @@
                 });
             } catch (error) {
                 console.error("通信エラー:", error);
+                document.getElementById('question-text').innerText = "通信エラーが発生しました";
             }
         }
 
@@ -83,18 +86,19 @@
                 correctAnswers++;
                 alert(`● 正解！\nページ: ${currentPage}`);
                 if (isMistakeMode) {
-                    await fetch(`http://127.0.0.1:8000/api/mistake/${currentWordId}`, { method: 'DELETE' });
+                    // クラウドのDBから削除
+                    await fetch(`${API_BASE_URL}/api/mistake/${currentWordId}`, { method: 'DELETE' });
                 }
             } else {
                 alert(`× 不正解...\n正解は: ${currentCorrectAnswer}\nページ: ${currentPage}`);
-                await fetch('http://127.0.0.1:8000/api/mistake', {
+                // クラウドのDBへ保存
+                await fetch(`${API_BASE_URL}/api/mistake`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ word_id: currentWordId })
                 });
             }
 
-            // ★ここで「貯金箱(localStorage)」に最新の数字を書き込む！
             localStorage.setItem('totalQuestions', totalQuestions);
             localStorage.setItem('correctAnswers', correctAnswers);
 
@@ -102,7 +106,6 @@
             fetchQuestion();
         }
 
-        // 正答率の表示を書き換える機能
         function updateAccuracyDisplay() {
             if (totalQuestions === 0) {
                 document.getElementById('accuracy').innerText = "--";
