@@ -1,0 +1,12 @@
+[
+    {"id": 1, "english": "follow", "japanese": "~に続く，従う"},
+    {"id": 2, "english": "consider", "japanese": "~を考慮する"},
+    {"id": 3, "english": "increase", "japanese": "増える"},
+    {"id": 4, "english": "expect", "japanese": "~予期する"},
+    {"id": 5, "english": "decide", "japanese": "~することを決意する"},
+    {"id": 6, "english": "develop", "japanese": "発達する"},
+    {"id": 7, "english": "provide", "japanese": "~を供給する"},
+    {"id": 8, "english": "continue", "japanese": "続く"},
+    {"id": 9, "english": "include", "japanese": "~を含む"},
+    {"id": 10, "english": "remain", "japanese": "ままでいる，残る"}
+]
