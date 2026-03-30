@@ -7,121 +7,238 @@
     <style>
         body { font-family: sans-serif; background-color: #f0f4f8; display: flex; justify-content: center; margin: 0; padding: 20px; }
         #app-container { background-color: white; width: 100%; max-width: 400px; min-height: 80vh; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 20px; text-align: center; }
-        #question-text { font-size: 24px; font-weight: bold; margin: 40px 0; color: #333; }
+        #question-text { font-size: 24px; font-weight: bold; margin: 20px 0 40px 0; color: #333; }
         .choice-btn { display: block; width: 100%; padding: 15px; margin-bottom: 10px; font-size: 18px; color: white; background-color: #007bff; border: none; border-radius: 10px; cursor: pointer; }
         .choice-btn:active { background-color: #0056b3; }
-        #mode-btn { margin-bottom: 20px; padding: 10px 20px; border-radius: 5px; cursor: pointer; background-color: #6c757d; color: white; border: none; }
+        #mode-btn { margin-bottom: 20px; padding: 10px 20px; border-radius: 5px; cursor: pointer; background-color: #dc3545; color: white; border: none; font-weight: bold; width: 100%; }
+        
+        .setup-container { margin-bottom: 20px; padding: 15px; background: #e9ecef; border-radius: 10px; }
+        .setup-container input { width: 50px; padding: 5px; font-size: 16px; text-align: center; }
+        #start-btn { margin-top: 10px; padding: 10px 20px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;}
+        #remaining-text { color: #666; font-size: 14px; font-weight: bold; }
+
+        .result-item { padding: 10px 0; border-bottom: 1px dashed #ccc; display: flex; justify-content: space-between; align-items: center; text-align: left;}
+        .result-word { font-size: 16px; }
+        .result-id { color: #888; font-size: 12px; margin-right: 5px; }
+        .mark-o { color: #28a745; font-weight: bold; font-size: 20px; }
+        .mark-x { color: #dc3545; font-weight: bold; font-size: 20px; }
+        
+        /* ★追加: 中断ボタン用のスタイル */
+        #quit-btn { padding: 5px 15px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        #quit-btn:hover { background-color: #5a6268; }
     </style>
 </head>
 <body>
 
     <div id="app-container">
         <h2>英単語テスト</h2>
-        <button id="mode-btn" onclick="toggleMode()">間違えた問題モードへ</button>
-        <p>正答率: <span id="accuracy">--</span>%</p>
-        <div id="question-text">読み込み中...</div>
-        <div id="choices-container"></div>
+        <p>今回の成績: <span id="accuracy" style="font-weight: bold; color: #007bff;">--</span></p>
+
+        <div id="setup-area">
+            <button id="mode-btn" onclick="startMistakeMode()">🔥 間違えた問題を復習する</button>
+
+            <div class="setup-container">
+                <p style="margin: 0 0 10px 0;">通常の出題範囲</p>
+                <input type="number" id="start-num" value="1"> 〜 <input type="number" id="end-num" value="10">
+                <button id="start-btn" onclick="startTest()">テスト開始！</button>
+            </div>
+        </div>
+
+        <div id="question-area" style="display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div id="remaining-text"></div>
+                <button id="quit-btn" onclick="quitTest()">中断する</button>
+            </div>
+            
+            <div id="question-text">読み込み中...</div>
+            <div id="choices-container"></div>
+        </div>
+
+        <div id="result-area" style="display: none;">
+            <h3 style="margin-top: 0; color: #333;">テスト結果一覧</h3>
+            
+            <div id="result-list-container" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; padding: 10px; margin-bottom: 20px; border: 1px solid #dee2e6;">
+            </div>
+
+            <button onclick="backToSetup()" style="padding: 10px 20px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;">トップに戻る</button>
+        </div>
     </div>
 
     <script>
-        // --- ★接続先をクラウド（Render）に変更します ---
-        const API_BASE_URL = "https://eng-vocab-api.onrender.com";
+        const API_BASE_URL = "http://127.0.0.1:8000";
 
-        // --- 1. データの準備（ブラウザの「貯金箱」からデータを取り出す） ---
-        let totalQuestions = parseInt(localStorage.getItem('totalQuestions')) || 0;
-        let correctAnswers = parseInt(localStorage.getItem('correctAnswers')) || 0;
-        
-        let currentWordId = null;
-        let currentPage = null;
-        let currentCorrectAnswer = "";
-        let isMistakeMode = false;
+        let sessionAnswered = 0; 
+        let sessionCorrect = 0;  
+        let questionDeck = []; 
+        let currentQuestion = null; 
+        let isMistakeMode = false; 
+        let sessionHistory = [];
 
         updateAccuracyDisplay();
 
-        // --- 2. 問題をサーバーからもらってくる機能 ---
-        async function fetchQuestion() {
+        async function startTest() {
+            const start = document.getElementById('start-num').value;
+            const end = document.getElementById('end-num').value;
+            isMistakeMode = false;
+            await fetchAndStart(`${API_BASE_URL}/api/questions?start=${start}&end=${end}`);
+        }
+
+        async function startMistakeMode() {
+            isMistakeMode = true;
+            await fetchAndStart(`${API_BASE_URL}/api/questions/mistakes`);
+        }
+
+        async function fetchAndStart(url) {
+            document.getElementById('setup-area').style.display = 'none';
+            document.getElementById('result-area').style.display = 'none'; 
+            document.getElementById('question-area').style.display = 'block';
+            document.getElementById('question-text').innerText = "問題を取得中...";
+            document.getElementById('remaining-text').innerText = "";
+
             try {
-                // 注文先のURLをクラウドのURLに合わせて組み立て
-                const endpoint = isMistakeMode ? '/api/question/mistakes' : '/api/question';
-                const url = API_BASE_URL + endpoint;
-                
                 const response = await fetch(url);
                 const data = await response.json();
 
-                if (data.data === null) {
-                    alert("間違えた問題はもうありません！通常モードに戻ります。");
-                    isMistakeMode = false;
-                    document.getElementById('mode-btn').innerText = "間違えた問題モードへ";
-                    fetchQuestion();
+                if (data.length === 0) {
+                    if (isMistakeMode) {
+                        alert("素晴らしい！間違えた問題は一つもありません！");
+                    } else {
+                        alert("指定された範囲に単語がありません！");
+                    }
+                    resetSetup();
                     return;
                 }
 
-                currentWordId = data.id;
-                currentPage = data.page;
-                currentCorrectAnswer = data.correct_answer; 
-                
-                document.getElementById('question-text').innerText = (isMistakeMode ? "【復習】" : "") + data.japanese;
-                const container = document.getElementById('choices-container');
-                container.innerHTML = '';
+                sessionAnswered = 0;
+                sessionCorrect = 0;
+                sessionHistory = []; 
+                updateAccuracyDisplay();
 
-                data.choices.forEach(englishWord => {
-                    const btn = document.createElement('button');
-                    btn.className = 'choice-btn';
-                    btn.innerText = englishWord;
-                    btn.onclick = () => checkAnswer(englishWord);
-                    container.appendChild(btn);
-                });
+                questionDeck = data; 
+                showNextQuestion();  
+
             } catch (error) {
                 console.error("通信エラー:", error);
-                document.getElementById('question-text').innerText = "通信エラーが発生しました";
+                alert("サーバーとの通信に失敗しました。");
+                resetSetup();
             }
         }
 
-        // --- 3. 正誤判定と「データの保存」 ---
+        function showNextQuestion() {
+            if (questionDeck.length === 0) {
+                showResultScreen();
+                return;
+            }
+
+            currentQuestion = questionDeck.pop();
+            
+            const prefix = isMistakeMode ? "【復習】" : "";
+            document.getElementById('remaining-text').innerText = `残り ${questionDeck.length + 1} 問`;
+            document.getElementById('question-text').innerText = prefix + currentQuestion.japanese;
+
+            const container = document.getElementById('choices-container');
+            container.innerHTML = '';
+
+            currentQuestion.choices.forEach(englishWord => {
+                const btn = document.createElement('button');
+                btn.className = 'choice-btn';
+                btn.innerText = englishWord;
+                btn.onclick = () => checkAnswer(englishWord);
+                container.appendChild(btn);
+            });
+        }
+
         async function checkAnswer(selected) {
-            totalQuestions++;
-            const isCorrect = (selected === currentCorrectAnswer);
+            sessionAnswered++;
+            const isCorrect = (selected === currentQuestion.correct_answer);
+            
+            sessionHistory.push({
+                id: currentQuestion.id,
+                english: currentQuestion.correct_answer,
+                japanese: currentQuestion.japanese,
+                isCorrect: isCorrect
+            });
             
             if (isCorrect) {
-                correctAnswers++;
-                alert(`● 正解！\nページ: ${currentPage}`);
+                sessionCorrect++;
+                alert(`● 正解！`);
+                
                 if (isMistakeMode) {
-                    // クラウドのDBから削除
-                    await fetch(`${API_BASE_URL}/api/mistake/${currentWordId}`, { method: 'DELETE' });
+                    fetch(`${API_BASE_URL}/api/mistake/${currentQuestion.id}`, { method: 'DELETE' });
                 }
             } else {
-                alert(`× 不正解...\n正解は: ${currentCorrectAnswer}\nページ: ${currentPage}`);
-                // クラウドのDBへ保存
-                await fetch(`${API_BASE_URL}/api/mistake`, {
+                alert(`× 不正解...\n正解は: ${currentQuestion.correct_answer}`);
+                
+                fetch(`${API_BASE_URL}/api/mistake`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ word_id: currentWordId })
+                    body: JSON.stringify({ word_id: currentQuestion.id })
                 });
             }
 
-            localStorage.setItem('totalQuestions', totalQuestions);
-            localStorage.setItem('correctAnswers', correctAnswers);
-
             updateAccuracyDisplay();
-            fetchQuestion();
+            showNextQuestion();
+        }
+
+        // ★追加: テストを途中でやめる関数
+        function quitTest() {
+            // confirmを使うと「OK」「キャンセル」の確認ダイアログが出せます
+            if (confirm("テストを中断してトップ画面に戻りますか？\n（※ここまでの成績はリセットされます）")) {
+                // スコアを初期化してトップに戻る
+                sessionAnswered = 0;
+                sessionCorrect = 0;
+                updateAccuracyDisplay();
+                resetSetup();
+            }
         }
 
         function updateAccuracyDisplay() {
-            if (totalQuestions === 0) {
+            if (sessionAnswered === 0) {
                 document.getElementById('accuracy').innerText = "--";
             } else {
-                const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
-                document.getElementById('accuracy').innerText = accuracy;
+                const percentage = Math.round((sessionCorrect / sessionAnswered) * 100);
+                document.getElementById('accuracy').innerText = `${sessionAnswered}問中 ${sessionCorrect}問正解（${percentage}%）`;
             }
         }
 
-        function toggleMode() {
-            isMistakeMode = !isMistakeMode;
-            document.getElementById('mode-btn').innerText = isMistakeMode ? "通常モードへ" : "間違えた問題モードへ";
-            fetchQuestion();
+        function showResultScreen() {
+            document.getElementById('question-area').style.display = 'none';
+            document.getElementById('result-area').style.display = 'block';
+
+            sessionHistory.sort((a, b) => a.id - b.id);
+
+            const container = document.getElementById('result-list-container');
+            container.innerHTML = ''; 
+
+            sessionHistory.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'result-item';
+
+                const markHtml = item.isCorrect 
+                    ? `<span class="mark-o">〇</span>` 
+                    : `<span class="mark-x">×</span>`;
+
+                const textHtml = `
+                    <div class="result-word">
+                        <span class="result-id">No.${item.id}</span>
+                        <strong>${item.english}</strong> (${item.japanese})
+                    </div>
+                `;
+
+                div.innerHTML = textHtml + markHtml;
+                container.appendChild(div);
+            });
         }
 
-        fetchQuestion();
+        function backToSetup() {
+            document.getElementById('result-area').style.display = 'none';
+            resetSetup();
+        }
+
+        function resetSetup() {
+            document.getElementById('setup-area').style.display = 'block';
+            document.getElementById('question-area').style.display = 'none';
+        }
     </script>
 </body>
 </html>
