@@ -15,14 +15,24 @@
         .setup-container { margin-bottom: 20px; padding: 15px; background: #e9ecef; border-radius: 10px; }
         .setup-container input { width: 50px; padding: 5px; font-size: 16px; text-align: center; }
         #start-btn { margin-top: 10px; padding: 10px 20px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;}
-        #remaining-text { color: #666; font-size: 14px; margin-bottom: 10px; font-weight: bold; }
+        #remaining-text { color: #666; font-size: 14px; font-weight: bold; }
+
+        .result-item { padding: 10px 0; border-bottom: 1px dashed #ccc; display: flex; justify-content: space-between; align-items: center; text-align: left;}
+        .result-word { font-size: 16px; }
+        .result-id { color: #888; font-size: 12px; margin-right: 5px; }
+        .mark-o { color: #28a745; font-weight: bold; font-size: 20px; }
+        .mark-x { color: #dc3545; font-weight: bold; font-size: 20px; }
+        
+        /* ★追加: 中断ボタン用のスタイル */
+        #quit-btn { padding: 5px 15px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: bold; }
+        #quit-btn:hover { background-color: #5a6268; }
     </style>
 </head>
 <body>
 
     <div id="app-container">
         <h2>英単語テスト</h2>
-        <p>正答率: <span id="accuracy">--</span>%</p>
+        <p>今回の成績: <span id="accuracy" style="font-weight: bold; color: #007bff;">--</span></p>
 
         <div id="setup-area">
             <button id="mode-btn" onclick="startMistakeMode()">🔥 間違えた問題を復習する</button>
@@ -35,25 +45,37 @@
         </div>
 
         <div id="question-area" style="display: none;">
-            <div id="remaining-text"></div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <div id="remaining-text"></div>
+                <button id="quit-btn" onclick="quitTest()">中断する</button>
+            </div>
+            
             <div id="question-text">読み込み中...</div>
             <div id="choices-container"></div>
+        </div>
+
+        <div id="result-area" style="display: none;">
+            <h3 style="margin-top: 0; color: #333;">テスト結果一覧</h3>
+            
+            <div id="result-list-container" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; padding: 10px; margin-bottom: 20px; border: 1px solid #dee2e6;">
+            </div>
+
+            <button onclick="backToSetup()" style="padding: 10px 20px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;">トップに戻る</button>
         </div>
     </div>
 
     <script>
         const API_BASE_URL = "http://127.0.0.1:8000";
 
-        let totalQuestions = parseInt(localStorage.getItem('totalQuestions')) || 0;
-        let correctAnswers = parseInt(localStorage.getItem('correctAnswers')) || 0;
-        
+        let sessionAnswered = 0; 
+        let sessionCorrect = 0;  
         let questionDeck = []; 
         let currentQuestion = null; 
-        let isMistakeMode = false; // ★復習モードかどうかの判定
+        let isMistakeMode = false; 
+        let sessionHistory = [];
 
         updateAccuracyDisplay();
 
-        // --- 1. 通常テスト開始 ---
         async function startTest() {
             const start = document.getElementById('start-num').value;
             const end = document.getElementById('end-num').value;
@@ -61,15 +83,14 @@
             await fetchAndStart(`${API_BASE_URL}/api/questions?start=${start}&end=${end}`);
         }
 
-        // --- 2. 復習モード開始 ---
         async function startMistakeMode() {
             isMistakeMode = true;
             await fetchAndStart(`${API_BASE_URL}/api/questions/mistakes`);
         }
 
-        // --- 共通: 山札をもらって画面を切り替える ---
         async function fetchAndStart(url) {
             document.getElementById('setup-area').style.display = 'none';
+            document.getElementById('result-area').style.display = 'none'; 
             document.getElementById('question-area').style.display = 'block';
             document.getElementById('question-text').innerText = "問題を取得中...";
             document.getElementById('remaining-text').innerText = "";
@@ -88,6 +109,11 @@
                     return;
                 }
 
+                sessionAnswered = 0;
+                sessionCorrect = 0;
+                sessionHistory = []; 
+                updateAccuracyDisplay();
+
                 questionDeck = data; 
                 showNextQuestion();  
 
@@ -98,21 +124,14 @@
             }
         }
 
-        // --- 3. 山札から1問引いて表示 ---
         function showNextQuestion() {
             if (questionDeck.length === 0) {
-                if (isMistakeMode) {
-                    alert("復習完了です！お疲れ様でした！");
-                } else {
-                    alert("テスト完了です！指定範囲をすべて解き終わりました！");
-                }
-                resetSetup();
+                showResultScreen();
                 return;
             }
 
             currentQuestion = questionDeck.pop();
             
-            // 復習モードの時はタイトルに【復習】をつける
             const prefix = isMistakeMode ? "【復習】" : "";
             document.getElementById('remaining-text').innerText = `残り ${questionDeck.length + 1} 問`;
             document.getElementById('question-text').innerText = prefix + currentQuestion.japanese;
@@ -129,23 +148,27 @@
             });
         }
 
-        // --- 4. 正誤判定とクラウドDB連携 ---
         async function checkAnswer(selected) {
-            totalQuestions++;
+            sessionAnswered++;
             const isCorrect = (selected === currentQuestion.correct_answer);
             
+            sessionHistory.push({
+                id: currentQuestion.id,
+                english: currentQuestion.correct_answer,
+                japanese: currentQuestion.japanese,
+                isCorrect: isCorrect
+            });
+            
             if (isCorrect) {
-                correctAnswers++;
+                sessionCorrect++;
                 alert(`● 正解！`);
                 
-                // ★復習モードで正解したら、クラウドのDBからその問題を削除（クリア！）
                 if (isMistakeMode) {
                     fetch(`${API_BASE_URL}/api/mistake/${currentQuestion.id}`, { method: 'DELETE' });
                 }
             } else {
                 alert(`× 不正解...\n正解は: ${currentQuestion.correct_answer}`);
                 
-                // 通常モード・復習モード問わず、間違えたらクラウドのDBに記録
                 fetch(`${API_BASE_URL}/api/mistake`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -153,20 +176,63 @@
                 });
             }
 
-            localStorage.setItem('totalQuestions', totalQuestions);
-            localStorage.setItem('correctAnswers', correctAnswers);
             updateAccuracyDisplay();
-
             showNextQuestion();
         }
 
+        // ★追加: テストを途中でやめる関数
+        function quitTest() {
+            // confirmを使うと「OK」「キャンセル」の確認ダイアログが出せます
+            if (confirm("テストを中断してトップ画面に戻りますか？\n（※ここまでの成績はリセットされます）")) {
+                // スコアを初期化してトップに戻る
+                sessionAnswered = 0;
+                sessionCorrect = 0;
+                updateAccuracyDisplay();
+                resetSetup();
+            }
+        }
+
         function updateAccuracyDisplay() {
-            if (totalQuestions === 0) {
+            if (sessionAnswered === 0) {
                 document.getElementById('accuracy').innerText = "--";
             } else {
-                const accuracy = Math.round((correctAnswers / totalQuestions) * 100);
-                document.getElementById('accuracy').innerText = accuracy;
+                const percentage = Math.round((sessionCorrect / sessionAnswered) * 100);
+                document.getElementById('accuracy').innerText = `${sessionAnswered}問中 ${sessionCorrect}問正解（${percentage}%）`;
             }
+        }
+
+        function showResultScreen() {
+            document.getElementById('question-area').style.display = 'none';
+            document.getElementById('result-area').style.display = 'block';
+
+            sessionHistory.sort((a, b) => a.id - b.id);
+
+            const container = document.getElementById('result-list-container');
+            container.innerHTML = ''; 
+
+            sessionHistory.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'result-item';
+
+                const markHtml = item.isCorrect 
+                    ? `<span class="mark-o">〇</span>` 
+                    : `<span class="mark-x">×</span>`;
+
+                const textHtml = `
+                    <div class="result-word">
+                        <span class="result-id">No.${item.id}</span>
+                        <strong>${item.english}</strong> (${item.japanese})
+                    </div>
+                `;
+
+                div.innerHTML = textHtml + markHtml;
+                container.appendChild(div);
+            });
+        }
+
+        function backToSetup() {
+            document.getElementById('result-area').style.display = 'none';
+            resetSetup();
         }
 
         function resetSetup() {
