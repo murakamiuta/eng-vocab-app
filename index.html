@@ -7,13 +7,16 @@
     <style>
         body { font-family: sans-serif; background-color: #f0f4f8; display: flex; justify-content: center; margin: 0; padding: 20px; }
         #app-container { background-color: white; width: 100%; max-width: 400px; min-height: 80vh; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 20px; text-align: center; }
-        #question-text { font-size: 24px; font-weight: bold; margin: 20px 0 40px 0; color: #333; }
-        .choice-btn { display: block; width: 100%; padding: 15px; margin-bottom: 10px; font-size: 18px; color: white; background-color: #007bff; border: none; border-radius: 10px; cursor: pointer; }
+        #question-text { font-size: 24px; font-weight: bold; margin: 15px 0 30px 0; color: #333; }
+        
+        /* 6択に合わせてボタンのサイズを少しコンパクトに調整 */
+        .choice-btn { display: block; width: 100%; padding: 12px; margin-bottom: 8px; font-size: 16px; color: white; background-color: #007bff; border: none; border-radius: 10px; cursor: pointer; }
         .choice-btn:active { background-color: #0056b3; }
+        
         #mode-btn { margin-bottom: 20px; padding: 10px 20px; border-radius: 5px; cursor: pointer; background-color: #dc3545; color: white; border: none; font-weight: bold; width: 100%; }
         
         .setup-container { margin-bottom: 20px; padding: 15px; background: #e9ecef; border-radius: 10px; }
-        .setup-container input { width: 50px; padding: 5px; font-size: 16px; text-align: center; }
+        .setup-container input { width: 60px; padding: 5px; font-size: 16px; text-align: center; }
         #start-btn { margin-top: 10px; padding: 10px 20px; font-size: 16px; background-color: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;}
         #remaining-text { color: #666; font-size: 14px; font-weight: bold; }
 
@@ -23,7 +26,6 @@
         .mark-o { color: #28a745; font-weight: bold; font-size: 20px; }
         .mark-x { color: #dc3545; font-weight: bold; font-size: 20px; }
         
-        /* ★追加: 中断ボタン用のスタイル */
         #quit-btn { padding: 5px 15px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: bold; }
         #quit-btn:hover { background-color: #5a6268; }
     </style>
@@ -38,8 +40,9 @@
             <button id="mode-btn" onclick="startMistakeMode()">🔥 間違えた問題を復習する</button>
 
             <div class="setup-container">
-                <p style="margin: 0 0 10px 0;">通常の出題範囲</p>
-                <input type="number" id="start-num" value="1"> 〜 <input type="number" id="end-num" value="10">
+                <p style="margin: 0 0 10px 0;">出題範囲 (1〜2027)</p>
+                <input type="number" id="start-num" value="1" min="1" max="2027"> 〜 
+                <input type="number" id="end-num" value="10" min="1" max="2027">
                 <button id="start-btn" onclick="startTest()">テスト開始！</button>
             </div>
         </div>
@@ -47,7 +50,7 @@
         <div id="question-area" style="display: none;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <div id="remaining-text"></div>
-                <button id="quit-btn" onclick="quitTest()">中断する</button>
+                <button id="quit-btn" onclick="quitTest()">中断</button>
             </div>
             
             <div id="question-text">読み込み中...</div>
@@ -56,10 +59,7 @@
 
         <div id="result-area" style="display: none;">
             <h3 style="margin-top: 0; color: #333;">テスト結果一覧</h3>
-            
-            <div id="result-list-container" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; padding: 10px; margin-bottom: 20px; border: 1px solid #dee2e6;">
-            </div>
-
+            <div id="result-list-container" style="max-height: 300px; overflow-y: auto; background: #f8f9fa; border-radius: 8px; padding: 10px; margin-bottom: 20px; border: 1px solid #dee2e6;"></div>
             <button onclick="backToSetup()" style="padding: 10px 20px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;">トップに戻る</button>
         </div>
     </div>
@@ -76,9 +76,32 @@
 
         updateAccuracyDisplay();
 
+        // --- 1. 通常テスト開始 ---
         async function startTest() {
-            const start = document.getElementById('start-num').value;
-            const end = document.getElementById('end-num').value;
+            const startInput = document.getElementById('start-num');
+            const endInput = document.getElementById('end-num');
+            const start = parseInt(startInput.value);
+            const end = parseInt(endInput.value);
+
+            // 【バリデーション】
+            if (isNaN(start) || isNaN(end)) {
+                alert("数値を入力してください。");
+                return;
+            }
+            if (start < 1 || end > 2027) {
+                alert("範囲は 1 から 2027 の間で指定してください。");
+                return;
+            }
+            if (start > end) {
+                alert("開始番号が終了番号を超えています。");
+                return;
+            }
+            // 6択を作るために最低6単語必要
+            if ((end - start + 1) < 6) {
+                alert("6択問題を作成するため、範囲は「6単語以上」含めてください。\n(例: 1 〜 6)");
+                return;
+            }
+
             isMistakeMode = false;
             await fetchAndStart(`${API_BASE_URL}/api/questions?start=${start}&end=${end}`);
         }
@@ -92,7 +115,7 @@
             document.getElementById('setup-area').style.display = 'none';
             document.getElementById('result-area').style.display = 'none'; 
             document.getElementById('question-area').style.display = 'block';
-            document.getElementById('question-text').innerText = "問題を取得中...";
+            document.getElementById('question-text').innerText = "取得中...";
             document.getElementById('remaining-text').innerText = "";
 
             try {
@@ -101,9 +124,9 @@
 
                 if (data.length === 0) {
                     if (isMistakeMode) {
-                        alert("素晴らしい！間違えた問題は一つもありません！");
+                        alert("間違えた問題はありません！");
                     } else {
-                        alert("指定された範囲に単語がありません！");
+                        alert("単語が見つかりませんでした。");
                     }
                     resetSetup();
                     return;
@@ -119,7 +142,7 @@
 
             } catch (error) {
                 console.error("通信エラー:", error);
-                alert("サーバーとの通信に失敗しました。");
+                alert("サーバー接続に失敗しました。");
                 resetSetup();
             }
         }
@@ -139,6 +162,7 @@
             const container = document.getElementById('choices-container');
             container.innerHTML = '';
 
+            // backendからの6つの選択肢をボタンとして表示
             currentQuestion.choices.forEach(englishWord => {
                 const btn = document.createElement('button');
                 btn.className = 'choice-btn';
@@ -161,14 +185,11 @@
             
             if (isCorrect) {
                 sessionCorrect++;
-                alert(`● 正解！`);
-                
                 if (isMistakeMode) {
                     fetch(`${API_BASE_URL}/api/mistake/${currentQuestion.id}`, { method: 'DELETE' });
                 }
             } else {
-                alert(`× 不正解...\n正解は: ${currentQuestion.correct_answer}`);
-                
+                alert(`× 不正解\n正解: ${currentQuestion.correct_answer}`);
                 fetch(`${API_BASE_URL}/api/mistake`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -180,11 +201,8 @@
             showNextQuestion();
         }
 
-        // ★追加: テストを途中でやめる関数
         function quitTest() {
-            // confirmを使うと「OK」「キャンセル」の確認ダイアログが出せます
-            if (confirm("テストを中断してトップ画面に戻りますか？\n（※ここまでの成績はリセットされます）")) {
-                // スコアを初期化してトップに戻る
+            if (confirm("テストを中断しますか？\n（現在の成績は破棄されます）")) {
                 sessionAnswered = 0;
                 sessionCorrect = 0;
                 updateAccuracyDisplay();
@@ -204,27 +222,14 @@
         function showResultScreen() {
             document.getElementById('question-area').style.display = 'none';
             document.getElementById('result-area').style.display = 'block';
-
             sessionHistory.sort((a, b) => a.id - b.id);
-
             const container = document.getElementById('result-list-container');
             container.innerHTML = ''; 
-
             sessionHistory.forEach(item => {
                 const div = document.createElement('div');
                 div.className = 'result-item';
-
-                const markHtml = item.isCorrect 
-                    ? `<span class="mark-o">〇</span>` 
-                    : `<span class="mark-x">×</span>`;
-
-                const textHtml = `
-                    <div class="result-word">
-                        <span class="result-id">No.${item.id}</span>
-                        <strong>${item.english}</strong> (${item.japanese})
-                    </div>
-                `;
-
+                const markHtml = item.isCorrect ? `<span class="mark-o">〇</span>` : `<span class="mark-x">×</span>`;
+                const textHtml = `<div class="result-word"><span class="result-id">No.${item.id}</span><strong>${item.english}</strong> (${item.japanese})</div>`;
                 div.innerHTML = textHtml + markHtml;
                 container.appendChild(div);
             });

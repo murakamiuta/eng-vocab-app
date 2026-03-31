@@ -1,134 +1,180 @@
 import os
-import json
 import random
-import psycopg2
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import psycopg2
+from pydantic import BaseModel
 from dotenv import load_dotenv
 
+# 環境変数の読み込み
 load_dotenv()
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 app = FastAPI()
 
+# CORSの設定（フロントエンドからの通信を許可）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"]
 )
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-
-# ==========================================
-# 1. 外部のJSONファイルから単語データを読み込む
-# ==========================================
-with open("words.json", "r", encoding="utf-8") as f:
-    words_db = json.load(f)
-
+# リクエストのデータ型定義
 class MistakeRequest(BaseModel):
     word_id: int
 
+# データベース接続用の共通関数
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        print("DB接続エラー:", e)
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
 # ==========================================
-# 2. 【新機能】範囲を指定して、シャッフルした問題の束を返すAPI
+# 1. 通常のテスト問題を取得（6択 ＆ ダミーは範囲内から！）
 # ==========================================
 @app.get("/api/questions")
 def get_questions(start: int = 1, end: int = 10):
-    """指定された範囲の単語をランダムな順番で一気に返すAPI"""
-    
-    # ① ユーザーが指定した範囲（start 〜 end）の単語だけを抽出
-    target_words = [w for w in words_db if start <= w["id"] <= end]
-    
-    # ② 抽出した単語の順番をランダムにシャッフル！（これで重複が出なくなります）
-    random.shuffle(target_words)
-    
-    # ③ ダミーの選択肢を作るために、全単語の英語リストを用意
-    all_english = [w["english"] for w in words_db]
-    
-    # ④ フロントエンド（画面）に返すための問題リストを作成
-    questions_list = []
-    for target in target_words:
-        # 6つの選択肢をランダムに選ぶ
-        choices = random.sample(all_english, min(6, len(all_english)))
-        
-        # 正解が含まれていなかったら、一つを正解にすり替える
-        if target["english"] not in choices:
-            choices[0] = target["english"]
-        
-        # 選択肢の並び順もシャッフル
-        random.shuffle(choices)
-        
-        # 1問分のデータをリストに追加
-        questions_list.append({
-            "id": target["id"],
-            "japanese": target["japanese"],
-            "choices": choices,
-            "correct_answer": target["english"]
-        })
-        
-    return questions_list
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # ① 指定された範囲の単語を取得
+        cur.execute("SELECT id, english, japanese FROM words WHERE id >= %s AND id <= %s", (start, end))
+        target_rows = cur.fetchall()
+
+        if not target_rows:
+            return []
+
+        # ② ダミー選択肢のプールを「今回取得した範囲内の単語だけ」に限定する
+        pool_words = [row[1] for row in target_rows]
+
+        questions = []
+        for row in target_rows:
+            word_id = row[0]
+            english = row[1]
+            japanese = row[2]
+
+            # 正解以外の単語を「同じ範囲内」からランダムに 5つ 選ぶ
+            pool = [w for w in pool_words if w != english]
+            wrong_choices = random.sample(pool, 5) if len(pool) >= 5 else pool
+            
+            # 正解と混ぜてシャッフル
+            choices = wrong_choices + [english]
+            random.shuffle(choices)
+
+            questions.append({
+                "id": word_id,
+                "japanese": japanese,
+                "correct_answer": english,
+                "choices": choices
+            })
+
+        # ランダムに出題順をシャッフル
+        random.shuffle(questions)
+
+        cur.close()
+        conn.close()
+        return questions
+
+    except Exception as e:
+        print("エラー:", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch questions")
 
 # ==========================================
-# 3. 間違えた問題の保存・削除（変更なし）
+# 2. 間違えた問題の保存
 # ==========================================
 @app.post("/api/mistake")
-def add_mistake(req: MistakeRequest):
-    if not DATABASE_URL:
-        return {"message": "ローカルテスト等でDBが無い場合はスキップ"}
-    with psycopg2.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("INSERT INTO mistakes (word_id) VALUES (%s) ON CONFLICT (word_id) DO NOTHING", (req.word_id,))
-    return {"message": "クラウドのDBにフラグを保存しました"}
-
-@app.delete("/api/mistake/{word_id}")
-def remove_mistake(word_id: int):
-    if not DATABASE_URL:
-        return {"status": "skipped"}
-    with psycopg2.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("DELETE FROM mistakes WHERE word_id = %s", (word_id,))
-    return {"status": "success", "message": f"ID {word_id} をクラウドから削除しました"}
+def save_mistake(req: MistakeRequest):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        
+        # すでに登録されていないかチェックしてから追加
+        cur.execute("SELECT 1 FROM mistakes WHERE word_id = %s", (req.word_id,))
+        if not cur.fetchone():
+            cur.execute("INSERT INTO mistakes (word_id) VALUES (%s)", (req.word_id,))
+            conn.commit()
+            
+        cur.close()
+        conn.close()
+        return {"message": "Mistake saved!"}
+    except Exception as e:
+        print("エラー:", e)
+        raise HTTPException(status_code=500, detail="Failed to save mistake")
 
 # ==========================================
-# 4. 【アップデート】間違えた問題を「山札」にして一括で返す
+# 3. 復習問題の取得（6択 ＆ ダミーは全単語から）
 # ==========================================
 @app.get("/api/questions/mistakes")
 def get_mistake_questions():
-    if not DATABASE_URL:
-         return [] # DBがない場合は空っぽを返す
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
 
-    with psycopg2.connect(DATABASE_URL) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT word_id FROM mistakes")
-            db_results = cursor.fetchall()
-            mistake_ids = [row[0] for row in db_results]
+        # mistakes テーブルと words テーブルを結合して取得
+        cur.execute("""
+            SELECT w.id, w.english, w.japanese 
+            FROM words w
+            JOIN mistakes m ON w.id = m.word_id
+        """)
+        target_rows = cur.fetchall()
 
-    if not mistake_ids:
-        return [] # 間違えた問題がゼロの場合
-    
-    # ① 間違えたIDの単語だけを抽出
-    target_mistakes = [w for w in words_db if w["id"] in mistake_ids]
-    
-    # ② 抽出した単語をシャッフル
-    random.shuffle(target_mistakes)
-    
-    all_english = [w["english"] for w in words_db]
-    questions_list = []
-    
-    # ③ フロントエンドに返すための山札リストを作成
-    for target in target_mistakes:
-        choices = random.sample(all_english, min(6, len(all_english)))
-        if target["english"] not in choices:
-            choices[0] = target["english"]
-        random.shuffle(choices)
+        if not target_rows:
+            return []
+
+        # 復習モードの場合は、選択肢不足を防ぐため「全単語」をダミー候補にする
+        cur.execute("SELECT english FROM words")
+        all_english_words = [row[0] for row in cur.fetchall()]
+
+        questions = []
+        for row in target_rows:
+            word_id = row[0]
+            english = row[1]
+            japanese = row[2]
+
+            pool = [w for w in all_english_words if w != english]
+            wrong_choices = random.sample(pool, 5) if len(pool) >= 5 else pool
+            
+            choices = wrong_choices + [english]
+            random.shuffle(choices)
+
+            questions.append({
+                "id": word_id,
+                "japanese": japanese,
+                "correct_answer": english,
+                "choices": choices
+            })
+
+        random.shuffle(questions)
+
+        cur.close()
+        conn.close()
+        return questions
+
+    except Exception as e:
+        print("エラー:", e)
+        raise HTTPException(status_code=500, detail="Failed to fetch mistakes")
+
+# ==========================================
+# 4. 間違えた問題の削除（正解した時）
+# ==========================================
+@app.delete("/api/mistake/{word_id}")
+def delete_mistake(word_id: int):
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
         
-        questions_list.append({
-            "id": target["id"],
-            "japanese": target["japanese"],
-            "choices": choices,
-            "correct_answer": target["english"]
-        })
-
-    return questions_list
+        cur.execute("DELETE FROM mistakes WHERE word_id = %s", (word_id,))
+        conn.commit()
+        
+        cur.close()
+        conn.close()
+        return {"message": "Mistake deleted!"}
+    except Exception as e:
+        print("エラー:", e)
+        raise HTTPException(status_code=500, detail="Failed to delete mistake")
