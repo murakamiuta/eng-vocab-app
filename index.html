@@ -6,22 +6,15 @@
     <title>英単語アプリ</title>
     <style>
         body { font-family: sans-serif; background-color: #f0f4f8; display: flex; justify-content: center; margin: 0; padding: 20px; min-height: 100vh; align-items: flex-start; }
-        
-        /* ログイン画面用のスタイル */
         #login-section { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 100%; max-width: 400px; height: 80vh; }
         .login-box { background: white; padding: 40px; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); text-align: center; width: 100%; box-sizing: border-box; }
         .google-btn { padding: 12px 20px; font-size: 16px; background-color: #4285F4; color: white; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 20px; }
         .google-btn:hover { background-color: #357ae8; }
-
-        /* アプリ本体のスタイル */
-        #app-container { background-color: white; width: 100%; max-width: 400px; min-height: 80vh; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 20px; text-align: center; display: none; /* 初期状態は非表示 */ box-sizing: border-box; }
-        
-        /* ユーザー情報バー */
+        #app-container { background-color: white; width: 100%; max-width: 400px; min-height: 80vh; border-radius: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); padding: 20px; text-align: center; display: none; box-sizing: border-box; }
         .user-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: #e9ecef; padding: 10px 15px; border-radius: 10px; }
         #user-name-display { font-weight: bold; color: #333; font-size: 14px; }
         #logout-btn { padding: 5px 10px; background-color: #6c757d; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 12px; font-weight: bold; }
         #logout-btn:hover { background-color: #5a6268; }
-
         #question-text { font-size: 24px; font-weight: bold; margin: 15px 0 30px 0; color: #333; }
         .choice-btn { display: block; width: 100%; padding: 12px; margin-bottom: 8px; font-size: 16px; color: white; background-color: #007bff; border: none; border-radius: 10px; cursor: pointer; }
         .choice-btn:active { background-color: #0056b3; }
@@ -90,7 +83,6 @@
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
-        // Firebaseの設定
         const firebaseConfig = {
             apiKey: "AIzaSyCc48W6vXNTI3r0PetCRJs9oScIdKc8Nfk",
             authDomain: "eng-vocab-app-c510c.firebaseapp.com",
@@ -100,12 +92,10 @@
             appId: "1:929787389949:web:fe79620b0830221c1e1b94"
         };
 
-        // Firebaseの初期化
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const provider = new GoogleAuthProvider();
 
-        // ログイン処理（HTMLのonclickで呼べるようにwindowに登録）
         window.login = () => {
             signInWithPopup(auth, provider).catch((error) => {
                 console.error("ログインエラー:", error);
@@ -113,35 +103,34 @@
             });
         };
 
-        // ログアウト処理
         window.logout = () => {
             signOut(auth).catch((error) => {
                 console.error("ログアウトエラー:", error);
             });
         };
 
-        // ログイン状態の監視（切り替えロジック）
         onAuthStateChanged(auth, (user) => {
             const loginSection = document.getElementById('login-section');
             const appContainer = document.getElementById('app-container');
             const userNameDisplay = document.getElementById('user-name-display');
 
             if (user) {
-                // ログインしている場合
                 loginSection.style.display = 'none';
                 appContainer.style.display = 'block';
                 userNameDisplay.innerText = user.displayName + " さん";
                 
-                // ※ここで将来的にバックエンド(Render)にユーザーID(user.uid)を送る処理を追加します
+                // ★追加: ログインしたユーザーのIDをグローバル変数に保存！
+                window.currentUserUid = user.uid;
             } else {
-                // ログインしていない場合
                 loginSection.style.display = 'flex';
                 appContainer.style.display = 'none';
+                window.currentUserUid = null;
             }
         });
     </script>
 
     <script>
+        // APIの向き先は Render のまま！
         const API_BASE_URL = "https://eng-vocab-app.onrender.com";
 
         let sessionAnswered = 0; 
@@ -170,15 +159,20 @@
             if (isNaN(start) || isNaN(end)) { alert("数値を入力してください。"); return; }
             if (start < 1 || end > 2027) { alert("範囲は 1 から 2027 の間で指定してください。"); return; }
             if (start > end) { alert("開始番号が終了番号を超えています。"); return; }
-            if ((end - start + 1) < 6) { alert("6択問題を作成するため、範囲は「6単語以上」含めてください。\n(例: 1 〜 6)"); return; }
+            if ((end - start + 1) < 6) { alert("6択問題を作成するため、範囲は「6単語以上」含めてください。"); return; }
 
             isMistakeMode = false;
             await fetchAndStart(`${API_BASE_URL}/api/questions?start=${start}&end=${end}`);
         }
 
         async function startMistakeMode() {
+            if (!window.currentUserUid) {
+                alert("ユーザーIDが取得できません。再ログインしてください。");
+                return;
+            }
             isMistakeMode = true;
-            await fetchAndStart(`${API_BASE_URL}/api/questions/mistakes`);
+            // ★変更: GETリクエストに ?user_id=〇〇 を付与して送信！
+            await fetchAndStart(`${API_BASE_URL}/api/questions/mistakes?user_id=${window.currentUserUid}`);
         }
 
         async function fetchAndStart(url) {
@@ -193,7 +187,7 @@
                 const data = await response.json();
 
                 if (data.length === 0) {
-                    if (isMistakeMode) { alert("間違えた問題はありません！"); } 
+                    if (isMistakeMode) { alert("間違えた問題はありません！素晴らしい！"); } 
                     else { alert("単語が見つかりませんでした。"); }
                     resetSetup();
                     return;
@@ -251,14 +245,19 @@
             if (isCorrect) {
                 sessionCorrect++;
                 if (isMistakeMode) {
-                    fetch(`${API_BASE_URL}/api/mistake/${currentQuestion.id}`, { method: 'DELETE' });
+                    // ★変更: DELETEリクエストのURLにも ?user_id=〇〇 を付ける！
+                    fetch(`${API_BASE_URL}/api/mistake/${currentQuestion.id}?user_id=${window.currentUserUid}`, { method: 'DELETE' });
                 }
             } else {
                 alert(`× 不正解\n正解: ${currentQuestion.correct_answer}`);
+                // ★変更: POSTリクエストのBody（中身）に user_id を追加！
                 fetch(`${API_BASE_URL}/api/mistake`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ word_id: currentQuestion.id })
+                    body: JSON.stringify({ 
+                        word_id: currentQuestion.id,
+                        user_id: window.currentUserUid 
+                    })
                 });
             }
 
